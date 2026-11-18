@@ -218,3 +218,15 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Local database and uploaded documents
+chroma_db/
+uploads/
+
+# Python virtual environment
+.venv/
+
+# Environment variables
+.env
+.env.*
+!.env.example
