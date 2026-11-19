@@ -9,7 +9,11 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, Field
 
+# Initialize observability before importing instrumented modules
 from app.observability import initialize
+
+initialize()
+
 from app.demo_context import principal, Principal
 from app.config import settings
 from app.db import connection, audit
@@ -18,7 +22,6 @@ from app.guardrails import classify_input
 from app.memory import history, save_turn, list_messages
 from worker.ingest import process_s3_key
 
-initialize()
 
 BASE = Path(__file__).resolve().parent
 UPLOAD_DIR = Path(settings().upload_dir).resolve()
@@ -217,6 +220,7 @@ def ask(body: Ask, p: Principal = Depends(principal)):
 
     conversation_id = body.conversation_id or uuid.uuid4()
     prior = history(p.tenant, conversation_id)
+
     result = chat(p, body.question, prior)
 
     save_turn(
@@ -258,7 +262,7 @@ def feedback(body: Feedback, p: Principal = Depends(principal)):
     with connection() as conn:
         conn.execute(
             """INSERT INTO feedback(tenant_id,actor,rating,note)
-            VALUES (%s,%s,%s,%s)""",
+            VALUES (%s,%s,%s)""",
             (p.tenant, p.subject, body.rating, body.note)
         )
 
