@@ -1,3 +1,5 @@
+
+import time
 from typing import TypedDict, Any
 
 from langgraph.graph import StateGraph, START, END
@@ -54,9 +56,19 @@ def is_memory_question(question: str) -> bool:
 
 @trace("guard")
 def guard(s):
-    return {
+
+    start = time.perf_counter()
+
+    result = {
         "question": check_input(s["question"])
     }
+
+    print(
+        f"[TIMING] Input guard: {time.perf_counter() - start:.2f}s",
+        flush=True
+    )
+
+    return result
 
 
 # -----------------------------------
@@ -65,6 +77,8 @@ def guard(s):
 
 @trace("retrieve")
 def retrieve(s):
+
+    start = time.perf_counter()
 
     p = s["principal"]
 
@@ -80,13 +94,32 @@ def retrieve(s):
         else s["question"]
     )
 
+    # Generate query embedding
+    t1 = time.perf_counter()
+
+    embedding = embed(query)
+
+    print(
+        f"[TIMING] Embedding: {time.perf_counter() - t1:.2f}s",
+        flush=True
+    )
+
+    # Search ChromaDB
+    t2 = time.perf_counter()
+
     hits = search(
         p.tenant,
-        embed(query),
+        embedding,
         p.groups,
         p.subject
     )
 
+    print(
+        f"[TIMING] ChromaDB search: {time.perf_counter() - t2:.2f}s",
+        flush=True
+    )
+
+    # Filter irrelevant passages
     hits = [
         h for h in hits
         if h["score"] >= settings().min_relevance
@@ -102,6 +135,11 @@ def retrieve(s):
         }
         for i, h in enumerate(hits)
     ]
+
+    print(
+        f"[TIMING] Total retrieval: {time.perf_counter() - start:.2f}s",
+        flush=True
+    )
 
     return {
         "passages": hits,
@@ -143,9 +181,16 @@ def route_after_retrieval(s):
 @trace("memory")
 def memory_node(s):
 
+    start = time.perf_counter()
+
     response = answer_from_history(
         s["question"],
         s.get("history", [])
+    )
+
+    print(
+        f"[TIMING] Memory answer: {time.perf_counter() - start:.2f}s",
+        flush=True
     )
 
     return {
@@ -179,6 +224,8 @@ def no_evidence(s):
 @trace("generate")
 def generate(s):
 
+    start = time.perf_counter()
+
     evidence = "\n\n".join(
         f'[{i + 1}] {h["metadata"].get("title", "Document")}, '
         f'page {h["metadata"].get("page", 1)}: '
@@ -186,10 +233,22 @@ def generate(s):
         for i, h in enumerate(s["passages"])
     )
 
+    t1 = time.perf_counter()
+
     response = answer(
         s["question"],
         evidence,
         s.get("history", [])
+    )
+
+    print(
+        f"[TIMING] Gemini answer: {time.perf_counter() - t1:.2f}s",
+        flush=True
+    )
+
+    print(
+        f"[TIMING] Total generation: {time.perf_counter() - start:.2f}s",
+        flush=True
     )
 
     return {
@@ -205,9 +264,18 @@ def generate(s):
 @trace("validate")
 def validate(s):
 
-    return {
+    start = time.perf_counter()
+
+    result = {
         "answer": check_output(s["answer"])
     }
+
+    print(
+        f"[TIMING] Output validation: {time.perf_counter() - start:.2f}s",
+        flush=True
+    )
+
+    return result
 
 
 # -----------------------------------
@@ -230,10 +298,8 @@ def make_graph():
     for name, fn in nodes:
         g.add_node(name, fn)
 
-    # Starting point
     g.add_edge(START, "guard")
 
-    # Memory intent detection
     g.add_conditional_edges(
         "guard",
         route_after_guard,
@@ -243,7 +309,6 @@ def make_graph():
         }
     )
 
-    # Document retrieval routing
     g.add_conditional_edges(
         "retrieve",
         route_after_retrieval,
@@ -254,11 +319,9 @@ def make_graph():
         }
     )
 
-    # Answer validation
     g.add_edge("generate", "validate")
     g.add_edge("memory", "validate")
 
-    # End nodes
     g.add_edge("validate", END)
     g.add_edge("no_evidence", END)
 
@@ -276,11 +339,18 @@ graph = make_graph()
 @trace("chat")
 def chat(p, question, history=None):
 
+    start = time.perf_counter()
+
     r = graph.invoke({
         "principal": p,
         "question": question,
         "history": history or []
     })
+
+    print(
+        f"[TIMING] Complete chat pipeline: {time.perf_counter() - start:.2f}s",
+        flush=True
+    )
 
     return {
         "answer": r["answer"],
