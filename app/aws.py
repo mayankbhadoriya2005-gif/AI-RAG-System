@@ -1,5 +1,6 @@
 
 import json
+import time
 from functools import lru_cache
 
 import boto3
@@ -61,6 +62,39 @@ def embed(text):
     return response.embeddings[0].values
 
 
+# Gemini generation with retry handling
+def generate_with_retry(model, contents, config, max_attempts=3):
+
+    for attempt in range(max_attempts):
+        try:
+            return gemini_client().models.generate_content(
+                model=model,
+                contents=contents,
+                config=config
+            )
+
+        except Exception as e:
+            error = str(e)
+
+            # Retry only temporary server overload errors
+            if "503" not in error and "UNAVAILABLE" not in error:
+                raise
+
+            if attempt == max_attempts - 1:
+                raise
+
+            delay = 2 ** (attempt + 1)
+
+            print(
+                f"[GEMINI] Temporary 503 error. "
+                f"Retrying in {delay} seconds "
+                f"(attempt {attempt + 2}/{max_attempts})",
+                flush=True
+            )
+
+            time.sleep(delay)
+
+
 # Generate answers using Gemini
 @trace("answer")
 def answer(question, evidence, history=None):
@@ -85,7 +119,7 @@ def answer(question, evidence, history=None):
         f"USER QUESTION:\n{question}"
     )
 
-    response = gemini_client().models.generate_content(
+    response = generate_with_retry(
         model=settings().gemini_chat_model,
         contents=prompt,
         config=types.GenerateContentConfig(
@@ -101,6 +135,7 @@ def answer(question, evidence, history=None):
     return response.text
 
 
+# Generate answers from conversation history
 @trace("memory_answer")
 def answer_from_history(question, history):
 
@@ -127,7 +162,7 @@ def answer_from_history(question, history):
         f"CURRENT QUESTION:\n{question}"
     )
 
-    response = gemini_client().models.generate_content(
+    response = generate_with_retry(
         model=settings().gemini_chat_model,
         contents=prompt,
         config=types.GenerateContentConfig(
